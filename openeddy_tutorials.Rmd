@@ -28,6 +28,14 @@ frame to CSV in its original form.
 First let´s read the R packages we will use.
 
 ```{r}
+if (!require("openeddy")) {
+  if (!require("devtools")) install.packages("devtools")
+  devtools::install_github("lsigut/openeddy")
+}
+if (!require("tibble")) install.packages("tibble")
+if (!require("REddyProc")) install.packages("REddyProc")
+if (!require("bigleaf")) install.packages("bigleaf")
+
 library(openeddy)
 library(REddyProc)
 ```
