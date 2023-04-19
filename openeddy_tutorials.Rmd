@@ -1,0 +1,801 @@
+---
+title: "openeddy_tutorials"
+author: "Ladislav Sigut"
+email: "sigut.l@czechglobe.cz"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+R Notebooks in RStudio can be viewed and worked with either in its raw
+form (*Source*) or its interpreted form resembling web page (*Visual*).
+Use the toggle above to switch to a preferred variant (*Ctrl+Shift+F4*).
+
+Use Outline to quickly navigate through main sections (*Ctrl+Shift+O*).
+
+Every code chunk (grey box) with R code can be run altogether using the
+green arrow (top right inside the box) or line by line using
+*Ctrl+Enter*.
+
+### Read and write data with units
+
+This chapter demonstrates common operations with data using *openeddy*.
+After reading the example data set you will convert its timestamp from
+character representation to date-time information recognized by R,
+perform subsetting that conserves additional attributes and save data
+frame to CSV in its original form.
+
+First let´s read the R packages we will use.
+
+```{r}
+library(openeddy)
+library(REddyProc)
+```
+
+Set working directory to the folder where this document is saved.
+
+```{r}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+Read the example data set that includes units on the second row. You may
+want to inspect the file in your favorite text editor to see its
+structure. Also, familiarize yourself with the **function
+documentation**. All *openeddy* functions have detailed documentation
+with description of their purpose, intended usage and often include
+**examples** where you can check your assumptions about how the function
+works.
+
+```{r}
+?read_eddy
+data <- read_eddy("KrP16.csv")
+```
+
+Inspect whether we ingested the data set correctly. Notice that each
+column has attached attributes *varnames* and *units* with respective
+values. At this point *varnames* equal original column names.
+
+```{r}
+str(data)
+head(data)
+```
+
+You can notice that at this point, column timestamp is represented as a
+character vector. Thus R cannot work with it as with date-time
+information.
+
+```{r}
+str(data$timestamp)
+
+# or more explicitly
+class(data$timestamp)
+```
+
+The conversion to "POSIXt" class family can be achieved in base R using
+`strptime()`. In the context of eddy covariance data and requirements of
+*openeddy* and *REddyProc* packages we also need to validate further
+properties of timestamp, implemented in `strptime_eddy()`. Timestamp has
+to reported in regular intervals (typically half-hourly) and without
+gaps (timestamp has to be logged even if no measurements exist, i.e with
+`NA` values in whole row). For easier processing, especially plotting,
+timestamp should be shifted to represent the middle of the averaging
+period. Typically measurements are assigned to the end of the averaging
+period (30 mins), thus must be moved backwards by 15 mins (-900 s).
+
+```{r}
+?strptime_eddy
+data$timestamp <- strptime_eddy(data$timestamp, shift.by = -900)
+```
+
+You can see that R now understands the timestamp as date-time
+information.
+
+```{r}
+class(data$timestamp)
+head(data$timestamp)
+```
+
+R is unfortunately stripping *varnames* and *units* attributes during
+certain operations, most importantly during subsetting across rows.
+
+```{r}
+# attributes are conserved when subsetting across columns
+str(data[, 1:3])
+
+# attributes are stripped when subsetting across rows
+str(data[1:3, ])
+```
+
+To overcome this behavior, use `ex()` when subsetting data frames with
+these attributes.
+
+```{r}
+?ex
+str(ex(data, 1:3, 1:6))
+```
+
+Finally, to conclude this part of the tutorial, we will save the data
+frame with units to a CSV file. To obtain file identical to the input we
+need to shift the timestamp back and convert it to character class.
+
+```{r}
+data$timestamp <- data$timestamp + 900
+data$timestamp <- format(data$timestamp, format = "%Y-%m-%d %H:%M", tz = "GMT")
+```
+
+Save the file and compare its size and structure with the input file
+*KrP16.csv* (they should be identical).
+
+```{r}
+?write_eddy
+write_eddy(data, "KrP16_resaved.csv")
+```
+
+### Merging data and filling gaps in timestamp
+
+This chapter demonstrates "vertical" and "horizontal" merging along
+timestamp. By vertical merging we mean primarily extending the time
+series span, i.e. the timestamp length. Horizontal merging primarily
+extends the amount of columns. The cases are separated here because
+timestamp has to be validated before further use (it must be regular
+without gaps).
+
+```{r}
+# prepare the session in case the previous chapter was skipped
+library(openeddy)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+To simulate vertical merge we will subset two small chunks from original
+data. Notice that they do not follow-up and differ in width (amount of
+columns). To apply `merge_eddy()` we will need to convert timestamp to
+POSIXt class.
+
+```{r}
+data <- read_eddy("KrP16.csv")
+data$timestamp <- strptime_eddy(data$timestamp, shift.by = -900)
+(chunk1 <- ex(data, 23:25, 1:4))
+(chunk2 <- ex(data, 28:30, 1:6))
+```
+
+The `merge_eddy()` will take the most common time interval between
+records and fill the timestamp accordingly. Notice the resulting regular
+timestamp and the full set of columns with `NA`s where records were not
+provided. Further, `merge_eddy()` keeps the *varnames* and *units*
+attributes.
+
+```{r}
+?merge_eddy
+data_merged <- merge_eddy(list(chunk1, chunk2))
+data_merged
+str(data_merged)
+```
+
+A special use case of `merge_eddy()` is **filling the gaps in timestamp
+of a single data frame**. The presence of gaps in timestamp would be
+indicated by `strptime_eddy()` error message. However, `merge_eddy()`
+requires timestamp in POSIXt class to work. Thus we need to provide an
+exception in `strptime_eddy` using `allow_gaps` argument.
+
+```{r}
+data <- read_eddy("KrP16.csv")
+# subset reasonable amount of data for the demonstration
+(chunk <- ex(data, 17:33, 1:6))
+# introduce gaps in the timestamp
+(gappy_chunk <- ex(chunk, -c(2:3, 6:10, 15:16)))
+# convert timestamp to POSIXt
+# - set allow_gaps = FALSE to view the error message
+gappy_chunk$timestamp <- strptime_eddy(gappy_chunk$timestamp, allow_gaps = TRUE)
+# fill the gaps in the timestamp
+merge_eddy(list(gappy_chunk))
+```
+
+To simulate horizontal merge we will separately extract subsets of
+meteorological and eddy covariance data. As in all cases above, both
+need to include timestamp along which we will merge them. Notice that
+the timestamp is not identical for both subsets.
+
+```{r}
+data <- read_eddy("KrP16.csv")
+data$timestamp <- strptime_eddy(data$timestamp, shift.by = -900)
+# subset reasonable amount of meteo and eddy data
+(meteo <- ex(data, 17:32, c(1:2, 8, 12)))
+(eddy <- ex(data, 18:33, c(1, 28, 31, 34)))
+```
+
+See that `merge_eddy()` builds on and extends the capabilities of base R
+`merge()`. While `merge()` works only with two data frames,
+`merge_eddy()` can combine arbitrary number of data frames, conserves
+*varnames* and *units,* and adds further validations of the output.
+
+```{r}
+?merge
+(m1 <- merge(meteo, eddy, all = TRUE))
+# attributes are stripped
+str(m1)
+```
+
+The primary intention of `merge_eddy()` is to combine provided data
+chunks in chronological order and keep only rows with unique timestamp
+while dropping duplicated timestamps. Thus, for horizontal merging we
+will need to relax the conditions of validation using
+`check_dupl = FALSE`.
+
+```{r}
+# check the outcome of check_dupl = TRUE
+(m2 <- merge_eddy(list(meteo, eddy), check_dupl = FALSE))
+str(m2)
+```
+
+### Plot types for viewing time series data
+
+This chapter focuses on *openeddy* functions that simplify plotting time
+series data, i.e. data that are associated with a timestamp in POSIXt
+format (not implemented through `ts` class). Although the package is
+clearly focused on eddy covariance data, these plotting functions can be
+useful also for fast display of other types of measurements (eg. soil
+chamber CO2 efflux or sap-flow measurements).
+
+```{r}
+# you might want to check the ts class
+?ts
+
+# prepare the session
+library(openeddy)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+# load and format data
+data <- read_eddy("KrP16.csv")
+data$timestamp <- strptime_eddy(data$timestamp, shift.by = -900)
+```
+
+Base R allows you to plot time series right away if you provide
+date-time information in POSIXt format. You can notice that
+
+1.  the formatting is not completely satisfying,
+
+2.  they do not show units of the plotted variable,
+
+3.  in the presence of large outliers they can be less informative.
+
+```{r}
+plot(data$timestamp, data$H)
+```
+
+This is amended in the following *openeddy* plotting functions. They are
+intended to produce a large number of plots in PDF file that is quick to
+render and it only suffices to change the variable `var`.
+
+You can see that in case of `plot_hh` the units are displayed, plot has
+a title and timestamp distinguishes years and its formatting can be
+changed easily. The outliers can still make plots hard to read though.
+
+```{r}
+?plot_hh
+plot_hh(data, var = "H", pch = 19)
+# change the formatting of x-axis
+plot_hh(data, var = "H", pch = 19, interval = "2 months", format = "%Y-%b")
+```
+
+To improve the readability of plots, `plot_precheck` zooms only on the
+defined quantile range (on default displaying 99% of the original data)
+and affects point transparency to show overlapping values better.
+Otherwise it includes all features of `plot_hh` described above.
+
+```{r}
+?plot_precheck
+plot_precheck(data, "H", pch = 19)
+```
+
+The above plots provide only a limited overview of the extensive data.
+In order to view daily courses of measurements we need to plot over
+multiple panels with reasonable time spans. `plot_eddy` supports two
+temporal resolutions: monthly and weekly.
+
+In monthly resolution, four panels with time series of selected variable
+`flux` will be displayed. `flux` **can be actually any variable with
+reasonable properties for this type of plotting**. Even if there is less
+than 4 months of data, panels will not be expanded to keep sensible
+aspect ratios. Plotting can be done
+
+1.  without any quality control (QC) information,
+
+2.  zooming only on the y-axis span of good data (QC flags \< 2;
+    excluded data is greyed-out)
+
+3.  showing actual flag values by color code (black = flag 0, green =
+    flag 1, red = flag 2)
+
+```{r}
+?plot_eddy
+# no QC
+plot_eddy(data, flux = "H", qc_flag = "none", skip = "weekly")
+# focus only on good quality data  
+plot_eddy(data, flux = "H", qc_flag = "qc_H_SSITC", skip = "weekly")
+# distinguish flag values
+plot_eddy(data, flux = "H", qc_flag = "qc_H_SSITC", test = "qc_H_SSITC", 
+          skip = "weekly")
+```
+
+Notice that the y-axis limits are adaptive. In the presence of outliers
+the maximum span of ylim can be set to improve readability.
+
+```{r}
+plot_eddy(data, flux = "H", qc_flag = "qc_H_SSITC", test = "qc_H_SSITC", 
+          skip = "weekly", ylim = c(-50, 300))
+```
+
+In weekly resolution, two sets of weekly figures are displayed in one
+frame. Each consists of three panels. The top and bottom panels show
+auxiliary meteorological data that are pulled from input data frame. The
+middle panel shows the selected main variable and precipitation if
+present. Notice that the names of auxiliary variables have to follow
+naming conventions described in `plot_eddy` documentation for the
+automated plotting to work correctly.
+
+```{r}
+plot_eddy(data, flux = "H", qc_flag = "qc_H_SSITC", test = "qc_H_SSITC", 
+          skip = "monthly")
+```
+
+`plot_eddy` can further visualize GPP and Reco if present in the input
+data frame and panels for auxiliary data can be further customized (see
+`?plot_eddy` for examples on how to make custom setups of top and bottom
+panels).
+
+As stated above, the main variable does not need to necessarily
+represent flux.
+
+```{r}
+plot_eddy(data, "h2o_mixing_ratio")
+```
+
+To further inspect the properties of the collected time series
+`ggplot_stats` can be useful to characterize statistical properties of
+dependence between two variables. It was originally designed to show
+robust statistics of dependencies on wind direction but it can be used
+also in a more general way.
+
+```{r}
+?ggplot_stats
+ggplot_stats(data, "wind_dir", "wind_speed", circular = TRUE)
+
+# simple light response curve
+summer_daytime <- data$PAR > 0 & data$DOY > 150 & data$DOY < 160
+ggplot_stats(ex(data, summer_daytime), "PAR", "NEE", breaks = 10)
+```
+
+### Flagging and removal of spurious measurements
+
+This chapter demonstrates some of the the quality control (QC) tools
+that can be utilized with *openeddy*. The selected QC filter will always
+produce flags marking the respective flux values as good (flags 0 -- 1)
+or spurious (flag 2). Since more QC aspects have to be typically
+considered, flags of multiple types of filters need to be combined and
+applied. To get a better impression of how a realistic QC setup for Tau,
+H, LE and NEE can look like check the [QC example EC
+workflow](https://github.com/lsigut/EC_workflow/blob/master/KRP16_2_QC_2023-04-14.R).
+
+```{r}
+# prepare the session
+library(openeddy)
+# tibbles are improved data frames 
+library(tibble)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+data <- read_eddy("KrP16.csv")
+data$timestamp <- strptime_eddy(data$timestamp, shift.by = -900)
+```
+
+For the demonstration purposes let´s assume that there is an obstruction
+affecting fluxes, thus data from wind sector 270 -- 290° need to be
+removed. For this we can use `apply_thr` with proper `flag` mode
+(`"between"`) and we should specify that in this case we work with
+angles.
+
+```{r}
+ggplot_stats(data, "wind_dir", "NEE")
+?apply_thr
+flags <- apply_thr(data$wind_dir, c(270, 290), flag = "between", angles = TRUE)
+```
+
+Now the obtained flags need to be applied to the respective flux in
+order to take effect.
+
+```{r}
+?apply_QC
+data$NEE_orig <- apply_QC(data$NEE, flags)
+ggplot_stats(data, "wind_dir", "NEE_orig")
+# notice that we can still access the non-filtered NEE
+ggplot_stats(data, "wind_dir", "NEE")
+```
+
+In another case we perhaps know from the field notes that certain period
+should be excluded due to maintenance or instrument failure. The extent
+of the period is exaggerated here.
+
+```{r}
+?flag_periods
+flags <- flag_periods(data$timestamp, 
+                      as.POSIXct("2016-08-01 12:15:00", tz = "GMT"), 
+                      as.POSIXct("2016-08-20 14:15:00", tz = "GMT"))
+data$NEE_orig <- apply_QC(data$NEE, flags)
+plot_precheck(data, "NEE_orig", pch = 19)
+```
+
+The EddyPro processing software provides the most commonly used tests of
+[steady state and integral turbulence
+characteristics](https://www.licor.com/env/support/EddyPro/topics/flux-quality-flags.html)
+(Foken and Wichura, 1996) as a QC column **without suffix (qc\_%flux%)**
+which was `correct()`ed in the example file to **"qc\_%flux%\_SSITC"**.
+
+In addition to these standard tests EddyPro provides further statistics
+extracted from the raw data. You can obtain the full set of extractable
+filters with `extract_QC`, plus some additional ones, described in the
+function documentation.
+
+```{r}
+?extract_QC
+QC <- extract_QC(data)
+```
+
+To evaluate the flag values of each filter you can use `summary_QC`. You
+can find the explanations about filter
+[prefixes](https://github.com/lsigut/EC_workflow#qc-prefixes) and
+[suffixes](https://github.com/lsigut/EC_workflow#qc-suffixes) at the [EC
+workflow](https://github.com/lsigut/EC_workflow) github page.
+
+```{r}
+?summary_QC
+summary_QC(QC, names(QC))
+```
+
+Now we will learn how to combine different QC filters into a single one
+using `combn_QC`. It could be achieved with a specification of filter
+names in a simple vector. However, specification of a complete QC setup
+requires definition of QC scheme across all fluxes that is the best
+documented in the tabular form (data frame) or even better using tibbles
+(when constructed using `tribble` its definition already shows the
+table). You can see the syntax below. For demonstration purposes we will
+want to combine NEE QC consisting of SSITC test, test of absolute
+limits, test of high frequency data spike percentage and test of CO2 and
+H2O signal strength.
+
+```{r}
+filters <- data.frame(NEE = c("qc_NEE_SSITC", "qc_SAGA_abslim", 
+                              "qc_SAGA_spikesHF", "qc_GA_LI7200"))
+filters
+
+# tribble() is more self-explanatory in more complicated setups 
+filters <- tribble(
+  ~NEE,
+  "qc_NEE_SSITC",
+  "qc_SAGA_abslim",
+  "qc_SAGA_spikesHF", 
+  "qc_GA_LI7200"
+)
+filters
+```
+
+To simplify the combining, the required filter columns are expected to
+be part of the input data frame. Here we will store in `data` the
+complete set of extracted filters. Notice the messages that inform about
+automated detection of additive filters or special handling of `NA`
+values.
+
+```{r}
+data[names(QC)] <- QC
+?combn_QC
+# here we use the above specified NEE column with filters to combine 
+data$qc_NEE_prelim <- combn_QC(data, filters$NEE)
+data$NEE_orig <- apply_QC(data$NEE, data$qc_NEE_prelim)
+```
+
+You can notice that the performed filtering led to an improvement when
+compared to non-filtered data but outliers are still present.
+
+```{r}
+plot_hh(data, "NEE", pch = 21)
+plot_hh(data, "NEE_orig", pch = 21)
+```
+
+There exists several ways how to statistically detect outliers. The one
+implemented in *openeddy* (`despikeLF`) is working with
+double-differenced time series, i.e. the outlier definition is based on
+the comparison of the value to its neighbors. You can notice that it
+includes visualization of the detection procedure to allow closer
+inspection of how the function arguments affected the flagging.
+
+```{r}
+?despikeLF
+# you can play with the z argument to observe the effect on detection sensitivity
+desp <- 
+  despikeLF(data, var = "NEE", qc_flag = "qc_NEE_prelim",
+            name_out = "qc_NEE_spikesLF", var_thr = c(-100, 100), 
+            plot = TRUE, z = 7)
+# use the Tab button to expand the desp$plots$ in RStudio
+desp$plots$`iter 1`$night$`2016-07-01 - 2016-07-13`
+```
+
+The structure of the `despikeLF` is different if you request
+`plot = TRUE` or not. Here we assign the spike detection (`desp$SD`) to
+our data frame, combine it again with previous filters and apply the
+resulting QC to NEE.
+
+```{r}
+data$qc_NEE_spikesLF <- desp$SD
+filters <- tribble(
+  ~NEE,
+  "qc_NEE_SSITC",
+  "qc_SAGA_abslim",
+  "qc_SAGA_spikesHF", 
+  "qc_GA_LI7200",
+  "qc_NEE_spikesLF"
+)
+
+# update our preliminary QC
+data$qc_NEE_prelim <- combn_QC(data, filters$NEE)
+# apply it to NEE
+data$NEE_orig <- apply_QC(data$NEE, data$qc_NEE_prelim)
+plot_hh(data, "NEE_orig", pch = 19)
+```
+
+We can see that the plotted NEE overview now looks much better. Ideally,
+in a full QC setup, the reasons for spurious measurements should be
+identified and fluxes removed using defined filters in a reproducible
+way. The QC performance is the best checked using `plot_eddy`.
+
+```{r}
+plot_eddy(data, "NEE", "qc_NEE_prelim", "qc_NEE_prelim")
+```
+
+To visualize the main causes of flux exclusion you can obtain the
+summary of the QC filters in a table or plot. In both cases you can
+distinguish the results for each filter separately or show their
+cumulative effect. Notice that the cumulative effect is not equal to the
+sum of flag 2 values across all filters. This is because multiple
+filters can assign flag 2 to given flux value. The exception from this
+rule are additive tests (see details in `?combn_QC` documentation).
+
+```{r}
+summary_QC(data, filters$NEE)
+summary_QC(data, filters$NEE, cumul = TRUE)
+summary_QC(data, filters$NEE, plot = TRUE)
+summary_QC(data, filters$NEE, plot = TRUE, cumul = TRUE)
+```
+
+In the case that there still remain spurious measurements for which
+automated filtering is not easy to define, manual checking can be
+applied. `check_manually` allows you to go through your data and
+interactively select the spurious measurements that should be
+additionally flagged. **This function does not require timestamp and can
+be utilized generally outside of scope of eddy covariance data**. Notice
+that the options available during the checking are displayed in the
+console. Choose the desired option by writing respective number in
+console followed by *Enter*. To achieve reproducibility, notice that you
+will get the option to save your manual QC as CSV file to the defined
+path (here it is your current working directory). This will help you
+also if you want to rerun the QC workflow without user interaction
+(`interactive = FALSE`). In that case `*manual_QC.csv` will be
+automatically reloaded.
+
+```{r}
+?check_manually
+man <- check_manually(data, path = ".", 
+                      vars = data.frame(
+                        x = "NEE",
+                        y = "PAR",
+                        z = "Tair"
+                      ), 
+                      qc_prefix = "qc_", qc_suffix = "_prelim", 
+                      interactive = TRUE, "KrP16")[-1]
+```
+
+### Aggregation of gap-filled data and uncertainty evaluation
+
+This chapter shows how to obtain a quick summary of eddy covariance and
+meteorological data by aggregation to specified time intervals.
+*openeddy* allows to aggregate also gappy, but preferentially gap-filled
+data and obtain the uncertainty of these estimates based on the
+REddyProc products. Unit conversion and sign correction is performed
+where relevant.
+
+```{r}
+# load libraries and prepare data (fetched from REddyProc)
+library(openeddy)
+library(REddyProc)
+library(bigleaf)
+# notice that timestamp is reconstructed from multiple columns
+DETha98 <- fConvertTimeToPosix(Example_DETha98, 'YDH', Year = 'Year',
+                               Day = 'DoY', Hour = 'Hour')[-(2:4)]
+EProc <- sEddyProc$new('DE-Tha', DETha98,
+                       c('NEE', 'LE', 'Rg', 'Tair', 'VPD', 'Ustar'))
+names(DETha98)[1] <- "timestamp"
+# center timestamp (necessary for aggregations)
+DETha98$timestamp <- DETha98$timestamp - 900
+```
+
+Aggregation by averaging is probably the most typical. Under the hood, R
+will aggregate over all records that have identical timestamp. Since
+they are all unique now we need to reduce the timestamp using format to
+a desired resolution.
+
+```{r}
+?strptime # for format options
+# reduced timestamp to monthly intervals
+format(DETha98$timestamp, "%b-%y")[1:6]
+table(format(DETha98$timestamp, "%b-%y"))
+# reduced timestamp to weekly intervals
+format(DETha98$timestamp, "%W-%Y")[1:6]
+table(format(DETha98$timestamp, "%W-%Y"))
+```
+
+Knowing this, you can obtain e.g. monthly averages. By default, presence
+of any `NA` value in the aggregation period produces `NA`. If you do not
+mind the gaps in your aggregation intervals you can suppress this by
+`na.rm = TRUE`.
+
+```{r}
+?agg_mean
+agg_mean(DETha98, format = "%b-%y")
+(means <- agg_mean(DETha98, format = "%b-%y", na.rm = TRUE))
+```
+
+While averaging is sensible in most cases, summation might not be. Also,
+the outcomes of summation might be sensible only if certain unit
+conversion is performed. Check the `agg_sum` documentation to see what
+conversions are available. Unit conversions are automated for the most
+common cases but rely on assumptions about original variable units
+rather than its explicit testing. Performed unit conversions are
+reported in the console. Sign correction might be useful in case of NEE
+and GPP. Aggregated productivity should be represented as a positive
+value for both variables. This is further clarified for NEE by renaming
+it to NEP (net ecosystem productivity). Notice again the `NA` behavior.
+In this case it should not be suppressed as we would clearly bias the
+results.
+
+```{r}
+(zz <- agg_sum(DETha98, format = "%b-%y", agg_per = "month-1"))
+openeddy::units(zz, names = TRUE)
+```
+
+Aggregation using `mean` and `sum` are the most typical cases but you
+can apply arbitrary statistical function that returns single value per
+interval. Here we show how to obtain minimum and maximum monthly air
+temperatures. You can test that application of `range` instead would
+have undesired effects.
+
+```{r}
+# Extract minimum and maximum within the intervals
+# - two notations possible: a function (min) or function name ("max")
+(mins <- agg_fun(DETha98, "%b-%y", min, na.rm = TRUE))
+(maxes <- agg_fun(DETha98, "%b-%y", "max", na.rm = TRUE))
+plot(means$Intervals, means$Tair_mean, ylim = c(-15, 35), 
+     xlab = "timestamp", ylab = "Tair")
+lines(mins$Intervals, mins$Tair_min)
+lines(maxes$Intervals, maxes$Tair_max)
+```
+
+We saw previously that for `agg_sum` to provide reasonable estimates, we
+need to supply gap-filled data. We can achieve that using *REddyProc*
+package. We will actually need the gap-filling by-products to estimate
+the uncertainty of the aggregated values. We can also show how can be
+evapotranspiration (ET) obtained from LE by unit conversion using
+*bigleaf* package.
+
+```{r}
+# Gap-fill NEE using approximate fixed uStar threshold
+EProc$sMDSGapFillAfterUstar('NEE', uStarTh = 0.3, FillAll = TRUE)
+
+# Gap-fill all other selected variables
+for (i in c('LE', 'Rg', 'Tair', 'VPD')) EProc$sMDSGapFill(i, FillAll = TRUE)
+
+# Export results and convert latent heat (LE) to evapotranspiration (ET)
+# - typical ET units are mm hour-1 independent of actual measurement interval
+results <- cbind(DETha98["timestamp"], EProc$sExportResults())
+LE_vars <- c("LE_orig", "LE_f", "LE_fqc", "LE_fall", "LE_fsd")
+ET_vars <- gsub("LE", "ET", LE_vars)
+results[, ET_vars] <-
+  lapply(LE_vars,
+         function(x) LE.to.ET(results[, x], results$Tair_f) * 3600)
+openeddy::units(results[ET_vars]) <- rep("mm hour-1", length(ET_vars))
+# Overwrite ET_fqc with proper values
+results$ET_fqc <- results$LE_fqc
+openeddy::units(results$ET_fqc) <- "-"
+```
+
+The gap-filled ET can be plotted using `barplot_agg`. Note that the
+width of the bars reflects the relative sample size in each interval
+(see that first interval is not a full week).
+
+```{r}
+# aggregate to weekly resolution
+weekly <- agg_sum(results, "%W_%Y", agg_per = "week-1")
+barplot_agg(weekly, "ET_f_sum", "daily")
+```
+
+The uncertainty of the estimates is evaluated for both typical
+aggregation cases - averaging and summation. Note that it represents
+standard deviation, thus to obtain e.g. 95% confidence interval you need
+to multiply it by 1.96 ([explained
+here](https://en.wikipedia.org/wiki/97.5th_percentile_point)). Unit
+conversions are performed accordingly also here.
+
+```{r}
+# Aggregate uncertainty derived from look-up table standard deviation (SD)
+# - sign and unit conversions are demonstrated
+?agg_fsd
+(unc <- agg_fsd(results, "%b-%y", agg_per = "month-1"))
+lapply(unc, openeddy::units, names = TRUE)
+```
+
+Similarly, you can obtain also uncertainty for Lasslop et al. (2010)
+flux partitioning based on DayTime (DT) data. Reco and GPP uncertainty
+evaluation is available only for this method. Reichstein et al. (2005)
+Reco model uncertainty is not exported by *REddyProc* and GPP is
+computed as residual (not modelled).
+
+```{r}
+# setup and run Lasslop et al. (2010) flux partitioning
+EProc$sSetLocationInfo(LatDeg = 51.0, LongDeg = 13.6, TimeZoneHour = 1)
+EProc$sGLFluxPartition(suffix = "uStar")
+
+# estimate the Reco and GPP uncertainty
+results <- cbind(DETha98["timestamp"], EProc$sExportResults())
+(unc_DT <- agg_DT_SD(results, "%b-%y", agg_per = "month-1"))
+lapply(unc_DT, openeddy::units, names = TRUE)
+```
+
+### List of additional functions included in openeddy
+
+Previous chapters focused on the typical tasks and solutions when
+working with eddy covariance measurements. It does not represent an
+exhaustive list of *openeddy* functions and examples are often
+simplified. The following functions did not make it to those tutorial
+examples and their usage can be better understood by checking their
+documentation or their application within
+[EC_workflow](https://github.com/lsigut/EC_workflow) scripts.
+
+-   `read_EddyPro`: EddyPro full output files have a specific structure.
+    This function allows you to read single or multiple CSV EddyPro full
+    output files at given path and merge them together.
+
+-   `structure_eddy`: folder structure recommended for eddy covariance
+    data processing and archivation. It can be used to create a list of
+    relative paths and create those directories on your hard drive.
+
+-   `remap_vars`: basically renames specified columns of a data frame.
+    Useful for regular switching between defined variable naming
+    conventions.
+
+-   `correct`: corrects the variable names (especially those produced by
+    EddyPro) to more R friendly variants.
+
+-   `round_df`: rounds the columns of numeric mode type double to
+    specified (default = 6) significant digits.
+
+-   `varnames`, `units`: get and set units and varnames of each column
+    in a data frame.
+
+-   `choose_avail`: available variable names are checked against the
+    full set of expected variables and missing cases are reported.
+
+-   `interdep`: during quality control, flux interdependence due to
+    corrections and conversions is important to consider. This idea was
+    proposed in Mauder et al. (2013)
+
+-   `fetch_filter`: flags all halfhours that have longer fetch distance
+    (of given percentage of contribution to the flux) than the user
+    defined boundary of the region of interest (ROI). See [ROI
+    boundary](https://github.com/lsigut/ROI_boundary) for details.
+
+-   `add_st`: storage computation is outside of the scope of *openeddy*.
+    This function corrects respective flux values with existing storage
+    estimates. EddyPro provides storage estimates computed using
+    discrete (one point) approach.
+
+-   `set_OT_input`: creates input for gap-filling and flux partitioning
+    tools implemented either offline in *REddyProc* package or
+    accessible online.
+
+-   `Griebel20_budgets`, `spti_coverage`, `spti_boot`: yearly budgets
+    with different consideration of space-time equity and related
+    functions. See Griebel et al. (2020) for details.
