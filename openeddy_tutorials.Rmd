@@ -14,8 +14,27 @@ Use the toggle above to switch to a preferred variant (*Ctrl+Shift+F4*).
 Use Outline to quickly navigate through main sections (*Ctrl+Shift+O*).
 
 Every code chunk (grey box) with R code can be run altogether using the
-green arrow (top right inside the box) or line by line using
-*Ctrl+Enter*.
+green arrow (play button at the top right inside the box) or line by
+line using *Ctrl+Enter* (preferred).
+
+Few additional practical tips for your work. RStudio simplifies your
+life with contextual autofills using *Tab*. When you start writing
+function (or object) name, you need to write just three letters included
+in the name, navigate by *Up*/*Down* keys to desired name and confirm by
+*Tab*. This works also for objects with internal structure when
+subsetting its elements by `$`. E.g. `data$` -\> *Up*/*Down* key -\>
+*Tab* allows you to select column for subsetting. This can be very
+useful with large number of internal objects (plots produced by
+`despikeLF`) or when constructing path to your local directory. Paths
+can be either relative `"."` to your working directory (try to copy
+`"."` to console, place cursor behind the dot and press *Tab*) or full
+paths `"c://Program Files/"` (place cursor behind the last slash and
+press *Tab*).
+
+When you write R script (*Ctrl+Shift+N*), RStudio also allows you to
+write simultaneously to multiple lines if you press *Alt* and drag to
+the desired amount of lines by mouse. This can be useful for formatting
+tibbles with `tribble()`.
 
 ### Read and write data with units
 
