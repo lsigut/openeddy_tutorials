@@ -355,8 +355,8 @@ In weekly resolution, two sets of weekly figures are displayed in one
 frame. Each consists of three panels. The top and bottom panels show
 auxiliary meteorological data that are pulled from input data frame. The
 middle panel shows the selected main variable and precipitation if
-present. Notice that the names of auxiliary variables have to follow
-naming conventions described in `plot_eddy` documentation for the
+present. Notice that the names of **auxiliary variables have to follow
+naming conventions** described in `plot_eddy` documentation for the
 automated plotting to work correctly.
 
 ```{r}
