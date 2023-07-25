@@ -44,19 +44,15 @@ character representation to date-time information recognized by R,
 perform subsetting that conserves additional attributes and save data
 frame to CSV in its original form.
 
-First let´s read the R packages we will use.
+First, let´s load *openeddy* R package.
 
 ```{r}
 if (!require("openeddy")) {
   if (!require("devtools")) install.packages("devtools")
   devtools::install_github("lsigut/openeddy")
 }
-if (!require("tibble")) install.packages("tibble")
-if (!require("REddyProc")) install.packages("REddyProc")
-if (!require("bigleaf")) install.packages("bigleaf")
 
 library(openeddy)
-library(REddyProc)
 ```
 
 Set working directory to the folder where this document is saved.
@@ -158,6 +154,164 @@ Save the file and compare its size and structure with the input file
 write_eddy(data, "KrP16_resaved.csv")
 ```
 
+### Remapping variable names
+
+This chapter focuses on the reproducible renaming of variables to
+conform to alternative naming strategies (conventions) of different
+software or flux tower networks using `remap_vars()`. The renaming can
+be performed either literally (exact matching) or based on a character
+string pattern (using regular expressions). In the case of pattern
+matching, multiple variables can be the source of a new variable - the
+source variables will be averaged. The best is to keep the remapping in
+a tabular form to easily identify the source variables and their
+respective new names. In case that quality control flags are available
+and differ from source variables by consistent prefix and/or suffix,
+they can also be included in the output and renamed accordingly.
+
+```{r}
+# Prepare the session in case the previous chapter was skipped
+if (!require("openeddy")) {
+  if (!require("devtools")) install.packages("devtools")
+  devtools::install_github("lsigut/openeddy")
+}
+if (!require("tibble")) install.packages("tibble")
+
+library(openeddy)
+library(tibble) # tibbles are improved data frames
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+data <- read_eddy("KrP16.csv")
+names(data)
+```
+
+Define the pairing between the source and the new variable name. In this
+case, exact match between source variable name (`orig_varname`) and
+column name in `data` must be found. Otherwise new column with `NA`s is
+initiated (see `"missing_var"` - `"PAR_IN_1_1_1"` pair).
+
+```{r}
+# Variable mapping definition (literal)
+literal_remapping <- tribble(
+  ~orig_varname,     ~renamed_varname,
+  "timestamp",       "TIMESTAMP",
+  "Tair",            "TA_1_1_1",
+  "RH",              "RH_1_1_1",
+  "GR",              "SW_IN_1_1_1",
+  "missing_var",     "PAR_IN_1_1_1",
+  "NEE",             "NEE_1_1_1",
+)
+```
+
+Notice that `varnames` attribute still carries the original name before
+remapping.
+
+```{r}
+?remap_vars # for remap_vars options and description
+rmap1 <- remap_vars(data, 
+                    literal_remapping$renamed_varname,
+                    literal_remapping$orig_varname)
+str(rmap1)
+```
+
+To keep the quality control information for your variables, you can
+specify the `qc` argument.
+
+```{r}
+rmap1_qc1 <- remap_vars(data, 
+                        literal_remapping$renamed_varname,
+                        literal_remapping$orig_varname,
+                        qc = "qc_")
+str(rmap1_qc1)
+```
+
+Notice that quality control column of NEE was not captured because it
+has additional suffix `"_SSITC"`. In that case the column can be added
+explicitly by adapting the remapping table.
+
+```{r}
+literal_remapping <- tribble(
+  ~orig_varname,     ~renamed_varname,
+  "timestamp",       "TIMESTAMP",
+  "Tair",            "TA_1_1_1",
+  "RH",              "RH_1_1_1",
+  "GR",              "SW_IN_1_1_1",
+  "missing_var",     "PAR_IN_1_1_1",
+  "NEE",             "NEE_1_1_1",
+  "qc_NEE_SSITC",    "qc_NEE_1_1_1" 
+)
+
+rmap1_qc2 <- remap_vars(data, 
+                        literal_remapping$renamed_varname,
+                        literal_remapping$orig_varname,
+                        qc = "qc_")
+str(rmap1_qc2)
+```
+
+To demonstrate remapping using regular expressions we will generate an
+example data frame `Ts_profile`. We will simulate a case of four soil
+temperature (Ts) profiles in different depths (0 and 10 cm) at four
+directions from the tower (N, E, S, W). Additionally, Eastern soil
+temperature profile has additional temperature measurement at 20 cm
+depth and the table contains also air temperature measurement from 2 m
+height. The columns are ordered randomly to demonstrate that remapping
+does not depend on column ordering.
+
+```{r}
+Ts_profile <- data[1:5, 1, drop = FALSE]
+head(Ts_profile)
+set.seed(42) # makes random numbers reproducible
+cm_0 <- paste0("Ts_0.00_", c("N", "E", "S", "W"))
+Ts_profile[cm_0] <- data.frame(replicate(4, rnorm(5)))
+head(Ts_profile)
+cm_10 <- paste0("Ts_0.10_", c("N", "E", "S", "W"))
+Ts_profile[cm_10] <- data.frame(replicate(4, rnorm(5, 5)))
+head(Ts_profile)
+Ts_profile$Ts_0.20_E <- rnorm(5, 10)
+Ts_profile$Ta_2.00 <- rnorm(5, 20)
+head(Ts_profile)
+varnames(Ts_profile) <- c("timestamp", cm_0, cm_10, "Ts_0.20_E", "Ta_2.00")
+str(Ts_profile)
+Ts_profile <- Ts_profile[sample(varnames(Ts_profile))]
+head(Ts_profile)
+```
+
+For the cases when we want to select multiple columns that will be
+averaged, it is always a good idea to check the correct definition of
+the regular expression patterns beforehand. Make sure that the pattern
+does not select more variables than you expected and also captures all
+variables that you require.
+
+```{r}
+?regexp # to learn about regular expressions
+grep("Ts_0.00_", names(Ts_profile), value = TRUE)
+grep("Ts_0.10_", names(Ts_profile), value = TRUE)
+```
+
+The `varnames` attribute stores the original variable names and allows
+you to double check that remapping was performed as expected. It also
+helps you to document the output.
+
+```{r}
+# Variable mapping definition (using regular expressions)
+regexp_remapping <- tribble(
+  ~orig_varname,     ~renamed_varname,
+  "timestamp",       "TIMESTAMP",
+  "Ts_0.00_",        "Tsoil_0.00_mean",
+  "Ts_0.10_",        "Tsoil_0.10_mean",
+  "Ts_0.20_E",       "Ts_0.20",
+  "Ta_2.00",         "Ta_2.00"
+)
+
+rmap2 <- remap_vars(Ts_profile, 
+                    regexp_remapping$renamed_varname,
+                    regexp_remapping$orig_varname,
+                    regexp = TRUE)
+rmap2
+str(rmap2)
+cat(paste(names(rmap2), varnames(rmap2), sep = " = ", collapse = "\n"))
+```
+
 ### Merging data and filling gaps in timestamp
 
 This chapter demonstrates "vertical" and "horizontal" merging along
@@ -169,7 +323,13 @@ without gaps).
 
 ```{r}
 # prepare the session in case the previous chapter was skipped
+if (!require("openeddy")) {
+  if (!require("devtools")) install.packages("devtools")
+  devtools::install_github("lsigut/openeddy")
+}
+
 library(openeddy)
+
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 ```
 
@@ -268,8 +428,15 @@ chamber CO2 efflux or sap-flow measurements).
 ?ts
 
 # prepare the session
+if (!require("openeddy")) {
+  if (!require("devtools")) install.packages("devtools")
+  devtools::install_github("lsigut/openeddy")
+}
+
 library(openeddy)
+
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
 # load and format data
 data <- read_eddy("KrP16.csv")
 data$timestamp <- strptime_eddy(data$timestamp, shift.by = -900)
@@ -404,10 +571,17 @@ workflow](https://github.com/lsigut/EC_workflow/blob/master/KRP16_2_QC_2023-04-1
 
 ```{r}
 # prepare the session
+if (!require("openeddy")) {
+  if (!require("devtools")) install.packages("devtools")
+  devtools::install_github("lsigut/openeddy")
+}
+if (!require("tibble")) install.packages("tibble")
+
 library(openeddy)
-# tibbles are improved data frames 
-library(tibble)
+library(tibble) # tibbles are improved data frames 
+
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
 data <- read_eddy("KrP16.csv")
 data$timestamp <- strptime_eddy(data$timestamp, shift.by = -900)
 ```
@@ -627,9 +801,17 @@ where relevant.
 
 ```{r}
 # load libraries and prepare data (fetched from REddyProc)
+if (!require("openeddy")) {
+  if (!require("devtools")) install.packages("devtools")
+  devtools::install_github("lsigut/openeddy")
+}
+if (!require("REddyProc")) install.packages("REddyProc")
+if (!require("bigleaf")) install.packages("bigleaf")
+
 library(openeddy)
 library(REddyProc)
 library(bigleaf)
+
 # notice that timestamp is reconstructed from multiple columns
 DETha98 <- fConvertTimeToPosix(Example_DETha98, 'YDH', Year = 'Year',
                                Day = 'DoY', Hour = 'Hour')[-(2:4)]
@@ -788,10 +970,6 @@ documentation or their application within
 -   `structure_eddy`: folder structure recommended for eddy covariance
     data processing and archivation. It can be used to create a list of
     relative paths and create those directories on your hard drive.
-
--   `remap_vars`: basically renames specified columns of a data frame.
-    Useful for regular switching between defined variable naming
-    conventions.
 
 -   `correct`: corrects the variable names (especially those produced by
     EddyPro) to more R friendly variants.
