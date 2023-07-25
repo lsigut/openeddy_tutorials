@@ -12,6 +12,8 @@ set. These include:
 
 - Read and write data with units
 
+- Remapping variable names
+
 - Merging data and filling gaps in timestamp
 
 - Plot types for viewing time series data
